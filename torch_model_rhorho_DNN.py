@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pickle
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 from Eearly_stop import *
 from sklearn.metrics import roc_auc_score, accuracy_score
 import sys
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 from torch.utils.data import Dataset, DataLoader
-from src_py.cpmix_utils import preprocess_data
+from src_py.cpmix_utils_brian import preprocess_data
 from src_py.rhorho import RhoRhoEvent
 from src_py.a1a1 import A1A1Event
 from src_py.a1rho import A1RhoEvent
@@ -52,7 +52,7 @@ parser.add_argument("-i", "--input", dest="IN", default='HiggsCP_data/rhorho')
 
 parser.add_argument("--miniset", dest="MINISET", type=lambda s: s.lower() in ['true', 't', 'yes', '1'], default=False)
 parser.add_argument("--z_noise_fraction", dest="Z_NOISE_FRACTION", type=float, default=0.0)
-
+parser.add_argument("--z_fraction", dest="Z_FRACTION", type=float, default=0.0)
 parser.add_argument("--delt_classes", dest="DELT_CLASSES", type=int, default=0,
                     help='Maximal distance between predicted and valid class for event being considered as correctly classified')
 
@@ -78,8 +78,11 @@ parser.add_argument("--hits_c012s", dest="HITS_C012s", choices=["hits_c0s", "hit
 parser.add_argument("-t", "--type", dest="TYPE", choices=types.keys(), default='nn_rhorho')
 
 parser.add_argument("-r", "--reprocess", dest="REPRO", type=bool, default=True)
-args, unknown = parser.parse_known_args()
+
 parser.add_argument("-bkgd", "--bkgdpath", dest="BKGDPATH", default= 'Ztt_dataset_Elz/pythia.Z_115_135.%s.1M.*.outTUPLE_labFrame')
+
+parser.add_argument("--label", dest="LABEL", default=True, action=argparse.BooleanOptionalAction)
+
 args, unknown = parser.parse_known_args()
 #####################################################################################################################
 
@@ -88,7 +91,8 @@ events={'nn_rhorho':'RhoRhoEvent', 'nn_a1rho':'A1RhoEvent', 'nn_a1a1':'A1A1Event
 if args.REPRO:
     for decaymode in tqdm(decaymodes):
         points = []
-        args.IN = 'HiggsCP_data/'+decaymode
+        # args.IN = '/lustre/scratch/MCChu/angus/rhorho'
+        # args.IN = 'HiggsCP_data/'+decaymode
         args.TYPE = 'nn_'+decaymode
         data, weights, argmaxs, perm, c012s, hits_argmaxs, hits_c012s = preprocess_data(args)
         event = eval(events[args.TYPE])(data, args)
@@ -144,10 +148,10 @@ mc_train_idx=np.random.choice(np.arange(points[particle_idx].train.x.shape[0]),i
 true_train_idx=list(set(np.arange(points[particle_idx].train.x.shape[0]))-set(mc_train_idx))
 
 mc_valid_idx=np.random.choice(np.arange(points[particle_idx].valid.x.shape[0]),int(points[particle_idx].valid.x.shape[0]*0.5),replace=False)
-true_valid_idx=list(set(np.arange(points[particle_idx].valid.x.shape[0]))-set(mc_train_idx))
+true_valid_idx=list(set(np.arange(points[particle_idx].valid.x.shape[0]))-set(mc_valid_idx))
 
 mc_test_idx=np.random.choice(np.arange(points[particle_idx].test.x.shape[0]),int(points[particle_idx].test.x.shape[0]*0.5),replace=False)
-true_test_idx=list(set(np.arange(points[particle_idx].test.x.shape[0]))-set(mc_train_idx))
+true_test_idx=list(set(np.arange(points[particle_idx].test.x.shape[0]))-set(mc_test_idx))
 
 
 uncertainty=0.0
@@ -163,15 +167,16 @@ valid_loader = DataLoader(dataset = valid_datasets,batch_size = batch_size,shuff
 test_datasets = MyDataset(points[particle_idx].test.x[mc_test_idx], points[particle_idx].test.x[true_test_idx]+uncertainty*np.random.normal(0,1,size=points[particle_idx].test.x[true_test_idx].shape),
                           points[particle_idx].test.weights[mc_test_idx],points[particle_idx].test.weights[true_test_idx])
 test_loader = DataLoader(dataset = test_datasets,batch_size = batch_size,shuffle = True)
-test_loader = DataLoader(dataset = test_datasets,batch_size = batch_size,shuffle = True)
+# test_loader = DataLoader(dataset = test_datasets,batch_size = batch_size,shuffle = True)
 
-model = NeuralNetwork(num_features=points[particle_idx].train.x.shape[1], num_classes=args.NUM_CLASSES,num_layers=args.LAYERS,drop_prob=0).to(device)
+model = NeuralNetwork(num_features=points[particle_idx].train.x.shape[1], num_classes = args.NUM_CLASSES + 1 if args.LABEL else args.NUM_CLASSES, num_layers=args.LAYERS,drop_prob=0).to(device)
 opt_g=torch.optim.Adam(model.parameters(),lr=1e-3)
 criterion=nn.CrossEntropyLoss()
-early_stopping = EarlyStopping(patience=10, verbose=True,path='model/best_model.pt')
+early_stopping = EarlyStopping(patience=10, verbose=True, path = os.path.join(args.IN, 'model/best_model.pt'))
 
 ####### Training NN
-epoch = 200
+epoch = 400
+losses = {'train':[], 'valid': [], 'test': []}
 for i in range(epoch):
     model.train()
     train_loss, sample_numbers, acc, total_samples, bg_acc = 0, 0, 0, 0, 0
@@ -193,7 +198,9 @@ for i in range(epoch):
         opt_g.step()
         print('\r training loss: %.3f \t acc: %.3f \t' % (train_loss / sample_numbers, acc / sample_numbers), end='')
     print()
-    vaild_acc, vaild_numbers, total_samples, bg_acc = 0, 0, 0, 0
+    losses['train'].append(train_loss/sample_numbers)
+
+    valid_loss, valid_acc, valid_numbers, total_samples, bg_acc = 0, 0, 0, 0, 0
     model.eval()
     with torch.no_grad():
         for batch_idx, (rhorho_s, rhorho_t, label_s, label_t) in enumerate(valid_loader):
@@ -202,34 +209,64 @@ for i in range(epoch):
             label_t = label_t[label_t.sum(axis=1) != 0]
             outputs = model(rhorho_t)
             _, predictions = torch.max(outputs, 1)
-            vaild_acc += (predictions == torch.argmax(label_t, axis=1)).sum().item()
-            vaild_numbers += len(rhorho_t)
+            valid_acc += (predictions == torch.argmax(label_t, axis=1)).sum().item()
+            valid_numbers += len(rhorho_t)
+            if isinstance(criterion,nn.CrossEntropyLoss):
+                loss=criterion(outputs,torch.argmax(label_t,axis=1))
+            else:
+                loss=criterion(outputs,label_t)
+            valid_loss+=loss.item()*len(rhorho_t) 
+
     print()
-    print('\r  acc: %.3f \t ' % (vaild_acc / vaild_numbers), end='')
+    print('\r validation loss: %.3f \t acc: %.3f \t' %(valid_loss/valid_numbers,valid_acc/valid_numbers),end='')
     print()
-    early_stopping(-vaild_acc / vaild_numbers, model)
+    losses['valid'].append(valid_loss/valid_numbers)
+    early_stopping(-valid_acc / valid_numbers, model)
     if early_stopping.early_stop:
         print("Early stopping")
         break;
-# test_loss=0
-# with torch.no_grad():
-#     for inputs, label in test_loader:
-#         outputs=model(inputs)
-#         test_loss+=mse_loss(outputs,label).item()*len(inputs)
-#     print('test loss: %f' %(test_loss/len(test_loader.dataset.tensors[0])))
 
 
+test_loss,test_acc,test_numbers,total_samples,bg_acc=0,0,0,0,0
+with torch.no_grad():
+    for batch_idx, (rhorho_s,rhorho_t,label_s,label_t) in enumerate(test_loader):
+        total_samples+=len(rhorho_t)
+        rhorho_t= rhorho_t[label_t.sum(axis=1)!=0]
+        label_t = label_t[label_t.sum(axis=1)!=0]
+        outputs=model(rhorho_t)
+        _, predictions = torch.max(outputs, 1)
+        test_acc+=(predictions==torch.argmax(label_t,axis=1)).sum().item()
+        test_numbers+=len(rhorho_t)
+        if isinstance(criterion,nn.CrossEntropyLoss):
+            loss=criterion(outputs,torch.argmax(label_t,axis=1))
+        else:
+            loss=criterion(outputs,label_t)
+        test_loss+=loss.item()*len(rhorho_t) 
+print()
+print('\r test loss: %.3f \t acc: %.3f \t' %(test_loss/test_numbers,test_acc/test_numbers),end='')
+print()
+losses['test'].append(test_loss/test_numbers)
+
+plt.figure()
+l_train = plt.plot(np.arange(len(losses['train'])),losses['train'])
+l_valid = plt.plot(np.arange(len(losses['valid'])),losses['valid'])
+
+plt.legend(labels=['Training','Validation'],loc="best",fontsize=12)
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.savefig(args.IN + "/Learning_curve.png")
 
 
 ############### Converting bkgd raw data into npy
-convert_bkgd_raw(args.BKGDPATH)
+# convert_bkgd_raw(args.BKGDPATH)
 
 ############### Preprocessing singal and bkgd from all the decaymodes
 if args.REPRO:
     for decaymode in tqdm(decaymodes):
         points = []
         args.Z_NOISE_FRACTION = 1
-        args.IN = 'HiggsCP_data/'+decaymode
+        # args.IN = '/lustre/scratch/MCChu/angus/rhorho'
+        # args.IN = 'HiggsCP_data/'+decaymode
         args.TYPE = 'nn_'+decaymode
         data, weights, argmaxs, perm, c012s, hits_argmaxs, hits_c012s = preprocess_data(args)
         event = eval(events[args.TYPE])(data, args)
@@ -247,11 +284,10 @@ background.append(background_points[particle_idx].valid.x[background_points[part
 background.append(background_points[particle_idx].test.x[background_points[particle_idx].test.weights.sum(axis=1)==0])
 
 background=np.concatenate(background)
-print(background)
 background=torch.tensor(background).float().to(device)
 
 ################### Testing NN w/ bkgd only
-model.load_state_dict(torch.load('model/best_model.pt'))
+model.load_state_dict(torch.load(os.path.join(args.IN, 'model/best_model.pt')))
 model.eval()
 with torch.no_grad():
     outputs=[]
@@ -266,11 +302,11 @@ pickle.dump(bg_outputs,open(args.IN+'/NN_outputs_background_only.pk','wb'))
 
 
 ################## Testing NN w/ signal only (Class 0)
-model.load_state_dict(torch.load('model/best_model.pt'))
+model.load_state_dict(torch.load(os.path.join(args.IN, 'model/best_model.pt')))
 model.eval()
 with torch.no_grad():
     signal_outputs,signal_labels=[],[]
-    for batch_idx, (rhorho_s,rhorho_t,label_s,_) in enumerate(train_loader):
+    for batch_idx, (rhorho_s,rhorho_t,label_s,_) in enumerate(test_loader):
         signal_outputs.append(model(rhorho_s).detach().cpu())
         signal_labels.append(label_s.detach().cpu())
 signal_outputs=torch.softmax(torch.cat(signal_outputs),axis=1).numpy()
@@ -293,8 +329,8 @@ plt.ylabel("Events")
 df = pd.concat([pd.DataFrame(a, columns=[columns[i]]) for i, a in enumerate([bg_outputs, np.argmax(signal_outputs,axis=1)], 0)], axis=1)
 
 # plot the data
-ax.set_xlim(0,args.NUM_CLASSES-1)
-ax = df.plot.hist(stacked=True, bins=args.NUM_CLASSES-1,ax=ax, color = ['skyblue','red']).get_figure()
+ax.set_xlim(0,args.NUM_CLASSES)
+ax = df.plot.hist(stacked=True, bins=args.NUM_CLASSES,ax=ax, color = ['skyblue','red']).get_figure()
 # ax.set_xticks(np.arange(args.NUM_CLASSES-1))
 # ax.set_xticklabels((np.linspace(0,2,args.NUM_CLASSES-1)*np.pi))
 #bars = ax.patches
@@ -304,4 +340,4 @@ ax = df.plot.hist(stacked=True, bins=args.NUM_CLASSES-1,ax=ax, color = ['skyblue
 #     for j in range(args.NUM_CLASSES-1):
 #         bars[i*(args.NUM_CLASSES-1)+j].set_hatch(hatches[i])
 
-ax.savefig('TestResults.pdf')
+ax.savefig(os.path.join(args.IN, 'TestResults.pdf'))
