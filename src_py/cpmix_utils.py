@@ -9,7 +9,6 @@ def weight_fun(x, a, b, c):
     # return a wt value for a given x
 
 def hits_fun(classes, x, num_classes):
-
     hits = np.zeros(num_classes)
     for i in range(num_classes-1):
         if x >= classes[i]*num_classes/(num_classes+1) and  x < classes[i+1]*num_classes/(num_classes+1):
@@ -47,8 +46,7 @@ def calc_weights_and_argmaxs(classes, c012s, data_len, num_classes):
             arg_max = phi
         if 0 < phi + np.pi < 2 * np.pi and weight_fun(phi + np.pi, *c012s[i]) > weight_fun(arg_max, *c012s[i]):
             arg_max = phi + np.pi
-        if 0 < phi + 2 * np.pi < 2 * np.pi and weight_fun(phi + 2 * np.pi, *c012s[i]) > weight_fun(arg_max,
-                                                                                                   *c012s[i]):
+        if 0 < phi + 2 * np.pi < 2 * np.pi and weight_fun(phi + 2 * np.pi, *c012s[i]) > weight_fun(arg_max, *c012s[i]):
             arg_max = phi + 2 * np.pi
 
         argmaxs[i] = arg_max
@@ -58,7 +56,10 @@ def calc_weights_and_argmaxs(classes, c012s, data_len, num_classes):
 
 def preprocess_data(args):
     data_path = args.IN
-    num_classes = args.NUM_CLASSES
+    if args.Z_FRACTION > 0:
+        num_classes = args.NUM_CLASSES + 1
+    else: 
+        num_classes = args.NUM_CLASSES
     reuse_weights = args.REUSE_WEIGHTS  # Set this flag to true if you want reuse calculated weights
 
     print ("Loading data")
@@ -98,6 +99,18 @@ def preprocess_data(args):
        or np.load(os.path.join(data_path, str(num_classes)+'hits_c2s.npy')).shape[1] != num_classes:   # First time to create 'c012.npy'
         classes = np.linspace(0, 2, num_classes)
         hits_c0s, hits_c1s, hits_c2s = calc_hits_c012s(classes, c012s, data_len, num_classes)
+
+        if args.Z_FRACTION > 0:
+            # additional class to hits_c012s
+            classes = np.linspace(0, 2, num_classes-1)
+            hits_c0s, hits_c1s, hits_c2s = calc_hits_c012s(classes, c012s, data_len, num_classes-1)
+            hits_c0s = np.hstack([hits_c0s,np.zeros((data_len,1))])
+            hits_c1s = np.hstack([hits_c1s,np.zeros((data_len,1))])
+            hits_c2s = np.hstack([hits_c2s,np.zeros((data_len,1))])
+        else:
+            classes = np.linspace(0, 2, num_classes)
+            hits_c0s, hits_c1s, hits_c2s = calc_hits_c012s(classes, c012s, data_len, num_classes)
+
         np.save(os.path.join(data_path, str(num_classes)+'hits_c0s.npy'), hits_c0s)
         np.save(os.path.join(data_path, str(num_classes)+'hits_c1s.npy'), hits_c1s)
         np.save(os.path.join(data_path, str(num_classes)+'hits_c2s.npy'), hits_c2s)
@@ -115,11 +128,22 @@ def preprocess_data(args):
             or not os.path.exists(os.path.join(data_path, str(num_classes)+'hits_argmaxs.npy')) \
             or np.load(os.path.join(data_path, str(num_classes)+'weights.npy')).shape[1] != num_classes \
             or np.load(os.path.join(data_path, str(num_classes)+'hits_argmaxs.npy')).shape[1] != num_classes:
-        classes = np.linspace(0, 2, num_classes) * np.pi
-        weights, argmaxs,  hits_argmaxs = calc_weights_and_argmaxs(classes, c012s, data_len, num_classes)
+        
+
+        if args.Z_FRACTION > 0:
+            # additional class to weights and hits_argmaxs
+            classes = np.linspace(0, 2, num_classes-1) * np.pi
+            weights, argmaxs,  hits_argmaxs = calc_weights_and_argmaxs(classes, c012s, data_len, num_classes-1)
+            weights = np.hstack([weights,np.zeros((data_len,1))])
+            hits_argmaxs = np.hstack([hits_argmaxs,np.zeros((data_len,1))])
+        else: 
+            classes = np.linspace(0, 2, num_classes) * np.pi
+            weights, argmaxs,  hits_argmaxs = calc_weights_and_argmaxs(classes, c012s, data_len, num_classes)
+
         np.save(os.path.join(data_path, str(num_classes)+'weights.npy'), weights)
         np.save(os.path.join(data_path, str(num_classes)+'argmaxs.npy'), argmaxs)
         np.save(os.path.join(data_path, str(num_classes)+'hits_argmaxs.npy'), hits_argmaxs)
+
     weights  = np.load(os.path.join(data_path, str(num_classes)+'weights.npy'))
     argmaxs = np.load(os.path.join(data_path, str(num_classes)+'argmaxs.npy'))
     hits_argmaxs = np.load(os.path.join(data_path, str(num_classes)+'hits_argmaxs.npy'))
@@ -177,6 +201,49 @@ def preprocess_data(args):
         print("Events including background: %d" % (Z_len + data_len))
         return data, weights, argmaxs, perm, c012s, hits_argmaxs, hits_c012s
 
+    if args.Z_FRACTION > 0:
+        Z_len = int(args.Z_FRACTION*data_len)
+        Z_data = read_np(os.path.join(data_path, suffix + "Z_raw.data.npy"))[:Z_len]
+        Z_weights = np.zeros((Z_len, num_classes-1))
+        Z_argmaxs = np.zeros((Z_len, 1))
+        Z_c012s   = np.zeros((Z_len, 3))
+        Z_c012s[:,0] = 1
+        Z_c012s[:,1] = 0
+        Z_c012s[:,2] = 0
+        Z_hits_c0s = np.zeros((Z_len, num_classes-1))
+        Z_hits_c1s = np.zeros((Z_len, num_classes-1))
+        Z_hits_c2s = np.zeros((Z_len, num_classes-1))
+        Z_hits_c0s[:,(num_classes-1)//2] = 1
+        Z_hits_c1s[:,(num_classes-1)//2] = 1
+        Z_hits_c2s[:,(num_classes-1)//2] = 1
+        Z_hits_argmaxs = np.zeros((Z_len, num_classes-1))
+        
+        # playing with binary classification of signal against background
+        if args.LABEL:
+            Z_weights = np.hstack([Z_weights,np.full((Z_len,1),1.0)])
+        else:
+            Z_weights = np.hstack([Z_weights,np.zeros((Z_len,1))])
+        
+        Z_hits_c0s = np.hstack([Z_hits_c0s,np.zeros((Z_len,1))])
+        Z_hits_c1s = np.hstack([Z_hits_c1s,np.zeros((Z_len,1))])
+        Z_hits_c2s = np.hstack([Z_hits_c2s,np.zeros((Z_len,1))])
+        
+        Z_hits_argmaxs = np.hstack([Z_hits_argmaxs,np.full((Z_len,1),1.0)])
+            
+        data = np.vstack([data,Z_data])
+        weights = np.vstack([weights,Z_weights])
+        argmaxs = np.vstack([argmaxs,Z_argmaxs])
+        c012s = np.vstack([c012s,Z_c012s])
+        if args.HITS_C012s == "hits_c0s" :
+            hits_c012s = np.vstack([hits_c012s,Z_hits_c0s])
+        elif args.HITS_C012s == "hits_c1s" :
+            hits_c012s = np.vstack([hits_c012s,Z_hits_c1s])
+        elif args.HITS_C012s == "hits_c2s" :
+            hits_c012s = np.vstack([hits_c012s,Z_hits_c2s])
+        hits_argmaxs = np.vstack([hits_argmaxs, Z_hits_argmaxs])
+        perm = np.random.permutation(data_len + Z_len)
+        print("Events including background: %d" % (Z_len + data_len))
+        return data, weights, argmaxs, perm, c012s, hits_argmaxs, hits_c012s
+        
     else:
         return data, weights, argmaxs, perm, c012s, hits_argmaxs, hits_c012s
-
