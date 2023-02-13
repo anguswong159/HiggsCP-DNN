@@ -216,14 +216,14 @@ class RhoRhoEvent(object):
         self.cols = np.concatenate(cols, 1)
 
 
-	if args.BETA > 0:
-		vn_tau1_nu_phi = smear_polynomial(v_tau1_nu_phi, args.BETA, args.pol_b, args.pol_c)
-		vn_tau2_nu_phi = smear_polynomial(v_tau2_nu_phi, args.BETA, args.pol_b, args.pol_c)
+        if args.BETA > 0:
+            vn_tau1_nu_phi = smear_polynomial(v_tau1_nu_phi, args.BETA, args.pol_b, args.pol_c)
+            vn_tau2_nu_phi = smear_polynomial(v_tau2_nu_phi, args.BETA, args.pol_b, args.pol_c)
 
-		tau1_sin_phi = np.sin(vn_tau1_nu_phi)
-		tau1_cos_phi = np.cos(vn_tau1_nu_phi)
-		tau2_sin_phi = np.sin(vn_tau2_nu_phi)
-		tau2_cos_phi = np.cos(vn_tau2_nu_phi)
+            tau1_sin_phi = np.sin(vn_tau1_nu_phi)
+            tau1_cos_phi = np.cos(vn_tau1_nu_phi)
+            tau2_sin_phi = np.sin(vn_tau2_nu_phi)
+            tau2_cos_phi = np.cos(vn_tau2_nu_phi)
 
-	self.valid_cols = [va_tau1_nu_trans * tau1_sin_phi, va_tau2_nu_trans * tau2_sin_phi, va_tau1_nu_trans * tau1_cos_phi, va_tau2_nu_trans * tau2_cos_phi]
+        self.valid_cols = [va_tau1_nu_trans * tau1_sin_phi, va_tau2_nu_trans * tau2_sin_phi, va_tau1_nu_trans * tau1_cos_phi, va_tau2_nu_trans * tau2_cos_phi]
 

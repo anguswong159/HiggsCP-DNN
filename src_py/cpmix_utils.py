@@ -67,7 +67,10 @@ def preprocess_data(args):
     # data = read_np(os.path.join(data_path, suffix + "_raw.data.npy"))
     data = read_np(os.path.join(data_path, suffix + "_raw.data.npy"))
     w = read_np(os.path.join(data_path, suffix + "_raw.w.npy")).swapaxes(0, 1)  ## w is raw weight, has not been classified into classes yet, the weight in calc_weights_and_argmaxs is classifed weight
+    # data = read_np(os.path.join(data_path, suffix + "_raw.data.npy"))[:1000]
+    # w = read_np(os.path.join(data_path, suffix + "_raw.w.npy"))[:1000].swapaxes(0, 1)  ## w is raw weight, has not been classified into classes yet, the weight in calc_weights_and_argmaxs is classifed weight
     # perm = read_np(os.path.join(data_path, suffix + "_raw.perm.npy"))
+    
 
     print ("Read %d events" % data.shape[0])
 
